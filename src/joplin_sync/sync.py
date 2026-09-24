@@ -29,6 +29,45 @@ def load_token(config: Path) -> str:
     raise RuntimeError("Nie znaleziono JOPLIN_TOKEN")
 
 
+def local_folder_paths(root: Path) -> set[str]:
+    """Relative paths of local directories, skipping hidden ones such as .git."""
+    paths = set()
+    for path in root.rglob("*"):
+        if not path.is_dir():
+            continue
+        relative = path.relative_to(root)
+        if any(part.startswith(".") for part in relative.parts):
+            continue
+        paths.add(relative.as_posix())
+    return paths
+
+
+def orphaned_folders(
+    folders: list[dict], root_id: str, local_paths: set[str], note_counts: dict[str, int]
+) -> list[tuple[str, str]]:
+    """Remote folders under root_id with no local directory and no notes.
+
+    A folder qualifies only if all of its subfolders qualify too. The result
+    lists children before parents, so it can be deleted in order.
+    """
+    result = []
+
+    def walk(folder_id: str, folder_path: str) -> bool:
+        removable = True
+        for child in folders:
+            if child.get("parent_id") != folder_id:
+                continue
+            child_path = f"{folder_path}/{child['title']}" if folder_path else child["title"]
+            if walk(child["id"], child_path):
+                result.append((child_path, child["id"]))
+            else:
+                removable = False
+        return removable and folder_path not in local_paths and note_counts.get(folder_id, 0) == 0
+
+    walk(root_id, "")
+    return result
+
+
 def pull(api: JoplinApi, root: Path, notebook_path: str, force: bool = False) -> None:
     folder = find_path(api, notebook_path)
     if not folder:
@@ -161,3 +200,18 @@ def publish(api: JoplinApi, root: Path, notebook_path: str | None, force: bool =
                 delete_orphaned(child["id"], new_path)
     
     delete_orphaned(target["id"])
+
+    # Synchronize: delete notebooks that don't exist locally and are now empty
+    folders = api.folders()
+
+    def subtree_ids(folder_id: str) -> list[str]:
+        ids = [folder_id]
+        for child in folders:
+            if child.get("parent_id") == folder_id:
+                ids += subtree_ids(child["id"])
+        return ids
+
+    note_counts = {folder_id: len(api.notes(folder_id)) for folder_id in subtree_ids(target["id"])}
+    for folder_path, folder_id in orphaned_folders(folders, target["id"], local_folder_paths(root), note_counts):
+        print(f"delete folder: {notebook_path}/{folder_path}")
+        api.delete_folder(folder_id)
