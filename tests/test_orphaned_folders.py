@@ -118,6 +118,30 @@ class PublishDeletesMovedNotebooksTests(unittest.TestCase):
             ["Databases", "Private", "Programming", "RDBMS"],
         )
 
+    def test_publish_ignores_markdown_files_in_hidden_paths(self):
+        api = FakeApi(
+            folders=[
+                {"id": "private", "title": "Private", "parent_id": ""},
+                {"id": "root", "title": "Programming", "parent_id": "private"},
+            ],
+            notes=[],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".git").mkdir(parents=True)
+            (root / ".git" / "Local metadata.md").write_text("# metadata\n", encoding="utf-8")
+            (root / "Cloud" / ".kilo").mkdir(parents=True)
+            (root / "Cloud" / ".kilo" / "Hidden.md").write_text("# hidden\n", encoding="utf-8")
+            (root / "Cloud").mkdir(exist_ok=True)
+            (root / "Cloud" / "Visible.md").write_text("# visible\n", encoding="utf-8")
+
+            publish(api, root, "Private/Programming", force=True)
+
+        self.assertEqual(
+            sorted(f["title"] for f in api.folders()),
+            ["Cloud", "Private", "Programming"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

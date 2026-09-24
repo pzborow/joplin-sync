@@ -12,6 +12,10 @@ from .tree import ensure_path, find_path
 STATE_NAME = ".joplin-sync.json"
 
 
+def has_hidden_part(path: Path) -> bool:
+    return any(part.startswith(".") for part in path.parts)
+
+
 def safe_filename(title: str, index: int | None = None) -> str:
     cleaned = "".join("_" if char in '/\\:*?\"<>|' else char for char in title).strip()
     cleaned = " ".join(cleaned.split())
@@ -36,7 +40,7 @@ def local_folder_paths(root: Path) -> set[str]:
         if not path.is_dir():
             continue
         relative = path.relative_to(root)
-        if any(part.startswith(".") for part in relative.parts):
+        if has_hidden_part(relative):
             continue
         paths.add(relative.as_posix())
     return paths
@@ -121,7 +125,7 @@ def publish(api: JoplinApi, root: Path, notebook_path: str | None, force: bool =
 
     print(f"publish notebook: {notebook_path}")
 
-    files = sorted(path for path in root.rglob("*.md") if ".joplin-sync.json" not in path.parts)
+    files = sorted(path for path in root.rglob("*.md") if not has_hidden_part(path.relative_to(root)))
 
     folders = api.folders()
 
