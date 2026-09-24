@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+
+from .api import JoplinApi
 
 
 def default_config_path() -> Path:
@@ -38,9 +37,7 @@ def load_url(config_path: Path | None = None) -> str:
 
 
 def get_folders(base_url: str, token: str) -> list[dict]:
-    query = urlencode({"token": token, "fields": "id,title,parent_id"})
-    with urlopen(Request(f"{base_url}/folders?{query}"), timeout=20) as response:
-        return json.load(response)["items"]
+    return JoplinApi(base_url, token).folders()
 
 
 def matching_paths(folders: list[dict], fragment: str) -> list[str]:
