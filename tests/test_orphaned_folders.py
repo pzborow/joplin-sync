@@ -66,11 +66,13 @@ class FakeApi:
         self._folders = [dict(f) for f in folders]
         self._notes = {n["id"]: dict(n) for n in notes}
         self.deleted_folders = []
+        self.notes_calls = {}
 
     def folders(self):
         return list(self._folders)
 
     def notes(self, folder_id):
+        self.notes_calls[folder_id] = self.notes_calls.get(folder_id, 0) + 1
         return [n for n in self._notes.values() if n["parent_id"] == folder_id]
 
     def create_folder(self, title, parent_id):
@@ -141,6 +143,30 @@ class PublishDeletesMovedNotebooksTests(unittest.TestCase):
             sorted(f["title"] for f in api.folders()),
             ["Cloud", "Private", "Programming"],
         )
+
+    def test_publish_lists_each_folder_at_most_twice(self):
+        api = FakeApi(
+            folders=[
+                {"id": "private", "title": "Private", "parent_id": ""},
+                {"id": "root", "title": "Programming", "parent_id": "private"},
+                {"id": "sql", "title": "SQL", "parent_id": "root"},
+                {"id": "py", "title": "Python", "parent_id": "root"},
+            ],
+            notes=[
+                {"id": "q1", "title": "Joins", "body": "", "parent_id": "sql"},
+                {"id": "p1", "title": "Typing", "body": "", "parent_id": "py"},
+            ],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "Python").mkdir()
+            (root / "Python" / "Typing.md").write_text("# Typing\n", encoding="utf-8")
+
+            publish(api, root, "Private/Programming", force=True)
+
+        # once to map existing notes, once while deleting orphans
+        self.assertLessEqual(max(api.notes_calls.values()), 2)
+        self.assertEqual(api.deleted_folders, ["sql"])
 
 
 if __name__ == "__main__":

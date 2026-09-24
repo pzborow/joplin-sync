@@ -181,41 +181,35 @@ def publish(api: JoplinApi, root: Path, notebook_path: str | None, force: bool =
         api.update_note(note_ids[str(file.resolve())], file.stem, body)
     save_state(root, notebook_path, target["id"])
 
-    # Synchronize: delete notes from Joplin that don't exist locally
+    # Synchronize: delete notes from Joplin that don't exist locally.
+    # One snapshot of the folder tree serves both cleanup steps, and the
+    # notes kept in each folder are counted while deleting, so no folder
+    # has to be listed again.
+    folders = api.folders()
+    note_counts: dict[str, int] = {}
+
     def delete_orphaned(folder_id: str, folder_path: str = "") -> None:
-        # Delete notes in this folder that don't exist locally
+        kept = 0
         for note in api.notes(folder_id):
             title = note["title"]
-            # Check if this note exists in this folder locally
-            should_exist = False
-            for file in files:
-                file_folder = "/".join(file.relative_to(root).parts[:-1])
-                if file.stem == title and file_folder == folder_path:
-                    should_exist = True
-                    break
-            if not should_exist:
+            should_exist = any(
+                file.stem == title and "/".join(file.relative_to(root).parts[:-1]) == folder_path
+                for file in files
+            )
+            if should_exist:
+                kept += 1
+            else:
                 print(f"delete: {notebook_path}/{folder_key(folder_path, title)}")
                 api.delete_note(note["id"])
-        
-        # Recurse into child folders
-        for child in api.folders():
+        note_counts[folder_id] = kept
+
+        for child in folders:
             if child.get("parent_id") == folder_id:
-                new_path = f"{folder_path}/{child['title']}" if folder_path else child["title"]
-                delete_orphaned(child["id"], new_path)
-    
+                delete_orphaned(child["id"], folder_key(folder_path, child["title"]))
+
     delete_orphaned(target["id"])
 
     # Synchronize: delete notebooks that don't exist locally and are now empty
-    folders = api.folders()
-
-    def subtree_ids(folder_id: str) -> list[str]:
-        ids = [folder_id]
-        for child in folders:
-            if child.get("parent_id") == folder_id:
-                ids += subtree_ids(child["id"])
-        return ids
-
-    note_counts = {folder_id: len(api.notes(folder_id)) for folder_id in subtree_ids(target["id"])}
     for folder_path, folder_id in orphaned_folders(folders, target["id"], local_folder_paths(root), note_counts):
         print(f"delete folder: {notebook_path}/{folder_path}")
         api.delete_folder(folder_id)
