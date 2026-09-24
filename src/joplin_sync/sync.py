@@ -12,6 +12,10 @@ from .tree import ensure_path, find_path
 STATE_NAME = ".joplin-sync.json"
 
 
+def has_hidden_part(path: Path) -> bool:
+    return any(part.startswith(".") for part in path.parts)
+
+
 def safe_filename(title: str, index: int | None = None) -> str:
     cleaned = "".join("_" if char in '/\\:*?\"<>|' else char for char in title).strip()
     cleaned = " ".join(cleaned.split())
@@ -27,6 +31,45 @@ def load_token(config: Path) -> str:
         if line.strip().startswith("JOPLIN_TOKEN="):
             return line.split("=", 1)[1].strip().strip('"').strip("'")
     raise RuntimeError("Nie znaleziono JOPLIN_TOKEN")
+
+
+def local_folder_paths(root: Path) -> set[str]:
+    """Relative paths of local directories, skipping hidden ones such as .git."""
+    paths = set()
+    for path in root.rglob("*"):
+        if not path.is_dir():
+            continue
+        relative = path.relative_to(root)
+        if has_hidden_part(relative):
+            continue
+        paths.add(relative.as_posix())
+    return paths
+
+
+def orphaned_folders(
+    folders: list[dict], root_id: str, local_paths: set[str], note_counts: dict[str, int]
+) -> list[tuple[str, str]]:
+    """Remote folders under root_id with no local directory and no notes.
+
+    A folder qualifies only if all of its subfolders qualify too. The result
+    lists children before parents, so it can be deleted in order.
+    """
+    result = []
+
+    def walk(folder_id: str, folder_path: str) -> bool:
+        removable = True
+        for child in folders:
+            if child.get("parent_id") != folder_id:
+                continue
+            child_path = f"{folder_path}/{child['title']}" if folder_path else child["title"]
+            if walk(child["id"], child_path):
+                result.append((child_path, child["id"]))
+            else:
+                removable = False
+        return removable and folder_path not in local_paths and note_counts.get(folder_id, 0) == 0
+
+    walk(root_id, "")
+    return result
 
 
 def pull(api: JoplinApi, root: Path, notebook_path: str, force: bool = False) -> None:
@@ -82,7 +125,7 @@ def publish(api: JoplinApi, root: Path, notebook_path: str | None, force: bool =
 
     print(f"publish notebook: {notebook_path}")
 
-    files = sorted(path for path in root.rglob("*.md") if ".joplin-sync.json" not in path.parts)
+    files = sorted(path for path in root.rglob("*.md") if not has_hidden_part(path.relative_to(root)))
 
     folders = api.folders()
 
@@ -138,26 +181,35 @@ def publish(api: JoplinApi, root: Path, notebook_path: str | None, force: bool =
         api.update_note(note_ids[str(file.resolve())], file.stem, body)
     save_state(root, notebook_path, target["id"])
 
-    # Synchronize: delete notes from Joplin that don't exist locally
+    # Synchronize: delete notes from Joplin that don't exist locally.
+    # One snapshot of the folder tree serves both cleanup steps, and the
+    # notes kept in each folder are counted while deleting, so no folder
+    # has to be listed again.
+    folders = api.folders()
+    note_counts: dict[str, int] = {}
+
     def delete_orphaned(folder_id: str, folder_path: str = "") -> None:
-        # Delete notes in this folder that don't exist locally
+        kept = 0
         for note in api.notes(folder_id):
             title = note["title"]
-            # Check if this note exists in this folder locally
-            should_exist = False
-            for file in files:
-                file_folder = "/".join(file.relative_to(root).parts[:-1])
-                if file.stem == title and file_folder == folder_path:
-                    should_exist = True
-                    break
-            if not should_exist:
+            should_exist = any(
+                file.stem == title and "/".join(file.relative_to(root).parts[:-1]) == folder_path
+                for file in files
+            )
+            if should_exist:
+                kept += 1
+            else:
                 print(f"delete: {notebook_path}/{folder_key(folder_path, title)}")
                 api.delete_note(note["id"])
-        
-        # Recurse into child folders
-        for child in api.folders():
+        note_counts[folder_id] = kept
+
+        for child in folders:
             if child.get("parent_id") == folder_id:
-                new_path = f"{folder_path}/{child['title']}" if folder_path else child["title"]
-                delete_orphaned(child["id"], new_path)
-    
+                delete_orphaned(child["id"], folder_key(folder_path, child["title"]))
+
     delete_orphaned(target["id"])
+
+    # Synchronize: delete notebooks that don't exist locally and are now empty
+    for folder_path, folder_id in orphaned_folders(folders, target["id"], local_folder_paths(root), note_counts):
+        print(f"delete folder: {notebook_path}/{folder_path}")
+        api.delete_folder(folder_id)

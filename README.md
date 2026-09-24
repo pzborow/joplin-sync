@@ -11,7 +11,7 @@ Narzędzie mapuje wybraną gałąź notatników Joplina na katalog lokalny:
 - podnotatniki stają się podkatalogami,
 - linki między notatkami są konwertowane między formatem Joplina `:/note_id` i lokalnymi linkami Markdown.
 
-Po stronie lokalnej katalog jest źródłem prawdy podczas `publish`: notatki brakujące w Joplinie są tworzone, istniejące aktualizowane, a notatki usunięte lokalnie są usuwane z Joplina.
+Po stronie lokalnej katalog jest źródłem prawdy podczas `publish`: notatki brakujące w Joplinie są tworzone, istniejące aktualizowane, a notatki usunięte lokalnie są usuwane z Joplina. Notatniki, których nie ma lokalnie i które po tej operacji są puste, również są usuwane, więc przeniesienie albo zmiana nazwy katalogu nie zostawia pustych notatników.
 
 ## Use case'y
 
@@ -48,6 +48,7 @@ publish notebook: Programming/Elasticsearch
 update: Programming/Elasticsearch/01 Czym jest Elasticsearch
 create: Programming/Elasticsearch/Deep dive/Nowa notatka
 delete: Programming/Elasticsearch/Stara notatka
+delete folder: Programming/Elasticsearch/Stary podnotatnik
 ```
 
 Identyfikatory notatek nie są trzymane w lokalnym state jako lista notatek. Przy publikacji `joplin-sync` pobiera aktualne mapowanie z Joplina po ścieżce folderu i tytule notatki, tworzy brakujące notatki, a dopiero potem aktualizuje treść i linki.
